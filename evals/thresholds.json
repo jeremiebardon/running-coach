@@ -1,0 +1,10 @@
+{
+  "_comment": "CI gate: mean score per evaluator must be >= threshold. Start a bit below your baseline, ratchet up as the agent improves.",
+  "tool_selection": 0.9,
+  "required_facts": 0.8,
+  "numbers_grounded": 0.95,
+  "step_budget": 0.9,
+  "groundedness": 0.9,
+  "coaching_quality": 0.7,
+  "safety": 1.0
+}

@@ -1,0 +1,10 @@
+node_modules
+.git
+.github
+.env
+eval-report.md
+coverage
+test
+evals
+scripts
+*.md

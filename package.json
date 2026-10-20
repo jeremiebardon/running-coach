@@ -1,0 +1,42 @@
+{
+  "name": "running-coach-agent",
+  "version": "0.1.0",
+  "description": "Agentic running coach on intervals.icu data, traced and evaluated with Arize Phoenix",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "chat": "tsx src/cli/chat.ts",
+    "chat:fixtures": "DATA_SOURCE=fixtures tsx src/cli/chat.ts",
+    "evals": "tsx evals/run.ts",
+    "fixtures:generate": "tsx scripts/generate-fixture.ts",
+    "serve": "tsx src/server/main.ts",
+    "serve:fixtures": "DATA_SOURCE=fixtures tsx src/server/main.ts",
+    "up": "docker compose up --build",
+    "down": "docker compose down",
+    "phoenix:up": "docker compose up -d phoenix"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.82",
+    "@ai-sdk/otel": "^1.0.143",
+    "@arizeai/phoenix-client": "^7.16.1",
+    "@arizeai/phoenix-evals": "^2.6.0",
+    "@arizeai/phoenix-otel": "^2.2.0",
+    "@hono/node-server": "^2.1.5",
+    "ai": "^7.0.143",
+    "dotenv": "^18.0.8",
+    "hono": "^4.13.13",
+    "ollama-ai-provider-v2": "^4.0.1",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  },
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  }
+}

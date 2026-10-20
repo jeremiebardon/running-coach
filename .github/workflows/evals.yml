@@ -1,0 +1,74 @@
+# Agent evals = the quality gate for anything that can change behaviour
+# (prompt, tools, domain logic, model, dependencies).
+#
+#  - PR: run the golden dataset once; fail the PR if a threshold regresses.
+#  - Nightly: 3 repetitions to measure variance and catch provider-side drift
+#    (the same model id can behave differently over time).
+#
+# Phoenix target: if PHOENIX_HOST is set as a repo secret (Phoenix Cloud or your
+# own instance), experiments persist and can be compared across PRs. Otherwise
+# an ephemeral Phoenix service container is used — the gate still works, but
+# history is lost when the job ends.
+name: evals
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "evals/**"
+      - "fixtures/**"
+      - "package-lock.json"
+  schedule:
+    - cron: "17 7 * * *" # daily ~03:17 Montreal time (jittered off the hour)
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: "Repetitions per example"
+        default: "1"
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      phoenix:
+        image: arizephoenix/phoenix:latest
+        ports:
+          - 6006:6006
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      COACH_MODEL: ${{ vars.COACH_MODEL || 'claude-sonnet-5-5' }}
+      JUDGE_MODEL: ${{ vars.JUDGE_MODEL || 'claude-haiku-5-5' }}
+      PHOENIX_HOST: ${{ secrets.PHOENIX_HOST || 'http://localhost:6006' }}
+      PHOENIX_COLLECTOR_ENDPOINT: ${{ secrets.PHOENIX_HOST || 'http://localhost:6006' }}
+      PHOENIX_API_KEY: ${{ secrets.PHOENIX_API_KEY }}
+      # `secrets` can't be used in step-level `if:`, so expose a flag via env
+      USE_REMOTE_PHOENIX: ${{ secrets.PHOENIX_HOST != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Wait for Phoenix
+        if: env.USE_REMOTE_PHOENIX != 'true'
+        run: timeout 60 bash -c 'until curl -sf http://localhost:6006 >/dev/null; do sleep 2; done'
+
+      - name: Run evals (gate)
+        run: |
+          REPS=${{ github.event_name == 'schedule' && '3' || inputs.repetitions || '1' }}
+          npm run evals -- --repetitions=$REPS
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.md
+          if-no-files-found: ignore
