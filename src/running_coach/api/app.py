@@ -45,7 +45,7 @@ def create_app(graph: CompiledStateGraph, data_source: str) -> FastAPI:
         title="Running coach",
         version="0.1.0",
         lifespan=lifespan,
-        telemetry={"tracing": False, "operation_spans": False, "metrics": True, "logs": False},
+        telemetry={"tracing": True, "operation_spans": True, "metrics": True, "logs": True},
     )
 
     app.add_middleware(

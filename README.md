@@ -1,266 +1,336 @@
-# 🏃 Running Coach Agent — POC
+# 🏃 Running Coach
 
-An agentic running coach that answers questions about **your intervals.icu data** ("Could I run a sub-2:55 marathon?", "How was my run today?", "Am I fresh for VMA tomorrow?"). It has **Arize Phoenix** tracing and an **eval suite** that gates CI.
+An AI running coach that answers questions about **your own training data** from [intervals.icu](https://intervals.icu):
 
-Stack: Python 3.13 · **uv** · **LangGraph** (explicit `StateGraph`) + LangChain · **Ollama** locally (`qwen3:14b`) or Claude · FastAPI (JSON + **Server-Sent Events**) · Phoenix (`arize-phoenix-otel`, OpenInference, `arize-phoenix-client`) · pytest · ruff · GitHub Actions.
+> *"Could I run a sub-2:55 marathon?"* · *"How was my run today?"* · *"Am I fresh enough for a hard session tomorrow?"* · *"Give me a pacing plan for 2:58."*
+
+It runs on a **local model** (Ollama) or Claude, shows its work with **traces** (Phoenix) and **metrics** (Prometheus), and has an **eval suite** that can block a pull request if answer quality drops.
+
+**Built with:** Python 3.13 · [uv](https://docs.astral.sh/uv/) · [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) · Ollama / Claude · FastAPI · Arize Phoenix · Prometheus · pytest · ruff
+
+> This is a proof of concept and a learning project. It's meant to grow, so the code favours clarity over cleverness.
 
 ---
 
-## Quick start
+## Contents
 
-### Local dev
+1. [Try it in 5 minutes](#1-try-it-in-5-minutes)
+2. [Everyday commands](#2-everyday-commands)
+3. [Using the HTTP API](#3-using-the-http-api)
+4. [How it works](#4-how-it-works)
+5. [Configuration](#5-configuration)
+6. [Seeing what the coach does](#6-seeing-what-the-coach-does)
+7. [Testing and evals](#7-testing-and-evals)
+8. [CI/CD](#8-cicd)
+9. [Roadmap and known limitations](#9-roadmap-and-known-limitations)
+
+---
+
+## 1. Try it in 5 minutes
+
+**You need:** [uv](https://docs.astral.sh/uv/getting-started/installation/), [Ollama](https://ollama.com/download) and Docker (Docker is only for the tracing UI).
 
 ```bash
-uv sync                                  # creates .venv from uv.lock
-cp .env.example .env                     # INTERVALS_API_KEY + DATA_SOURCE=intervals for your real data
-ollama pull qwen3:14b                    # any Ollama model with tool calling works
-docker compose up -d phoenix             # Phoenix UI → http://localhost:6006
+uv sync                          # install dependencies into .venv
+cp .env.example .env             # default settings work as-is
+ollama pull qwen3:14b            # the local model (any Ollama model with tool calling works)
+docker compose up -d phoenix     # optional: tracing UI at http://localhost:6006
 
-uv run coach-chat --fixtures             # terminal chat with the demo athlete (tokens stream as they arrive)
-uv run coach-chat                        # your real data
-uv run coach-serve --fixtures            # HTTP API on :3000 — OpenAPI docs at http://localhost:3000/docs
-uv run langgraph dev                     # open the graph in LangGraph Studio (step through nodes, edit state)
-                                         # Windows: set PYTHONUTF8=1 first, or its log output hits cp1252 errors
-
-uv run pytest                            # offline: domain, intervals.icu client, graph (fake model), API + SSE, evaluators
-uv run ruff check . && uv run ruff format .
-uv run python -m evals.run               # golden dataset → Phoenix experiment → threshold gate
-uv run python -m evals.run --code-only   # skip the LLM judges (faster)
+uv run coach-chat --fixtures     # chat in your terminal with a built-in demo athlete
 ```
 
-### HTTP API
+`--fixtures` uses a made-up athlete (about 70 km/week, a 1:24 half marathon last week), so you don't need an intervals.icu account to try it.
+
+**To use your real data:** put your key in `.env` (`INTERVALS_API_KEY=…`, from intervals.icu → Settings → Developer) and run `uv run coach-chat` without the flag.
+
+> 💡 A 14B model on a local GPU takes tens of seconds per answer, because the coach calls several tools before it replies. Tokens stream as they arrive, so you'll see it working.
+
+---
+
+## 2. Everyday commands
+
+| I want to… | Run |
+|---|---|
+| Chat in the terminal | `uv run coach-chat` (add `--fixtures` for the demo athlete) |
+| Start the HTTP API | `uv run coach-serve --fixtures` → docs at http://localhost:3000/docs |
+| Run everything in Docker | `docker compose up --build` (API :3000, Phoenix :6006, Prometheus :9090) |
+| Step through the agent visually | `uv run langgraph dev` (LangGraph Studio) ¹ |
+| Run the tests | `uv run pytest` (offline, no model needed) |
+| Lint and format | `uv run ruff check . && uv run ruff format .` |
+| Run the quality evals | `uv run python -m evals.run` (add `--code-only` to skip the LLM judges) |
+| Regenerate the demo athlete | `uv run python scripts/generate_fixture.py` |
+
+¹ On Windows, set `PYTHONUTF8=1` first, otherwise its log output hits encoding errors.
+
+---
+
+## 3. Using the HTTP API
+
+Start it with `uv run coach-serve --fixtures`. The interactive docs are at `/docs`.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /health` | Is the server up, and which data source is it using? |
+| `POST /chat` | Ask a question, get **one complete JSON answer** |
+| `POST /chat/stream` | Ask a question, get the answer **piece by piece** (Server-Sent Events) |
+| `DELETE /sessions/{id}` | Forget a conversation |
+| `GET /metrics` | Prometheus metrics |
+
+### Ask a question
 
 ```bash
-curl localhost:3000/health
-
-# one JSON answer — send sessionId back to continue the conversation
 curl -X POST localhost:3000/chat -H 'content-type: application/json' \
-     -d '{"message":"Could I run a sub 2:55 marathon?"}'
-# → { sessionId, answer, tools, steps, usage }
+     -d '{"message": "Could I run a sub 2:55 marathon?"}'
+# → { "sessionId": "…", "answer": "…", "tools": ["predict_race_time"], "steps": 2, "usage": {…} }
+```
 
-# streamed answer (Server-Sent Events)
+To keep the conversation going, send the `sessionId` back with your next message: `{"message": "And what about 3:00?", "sessionId": "…"}`.
+
+### Stream the answer
+
+```bash
 curl -N -X POST localhost:3000/chat/stream -H 'content-type: application/json' \
-     -d '{"message":"How was my run today?"}'
-# event: session      data: {"sessionId": "…"}
-# event: tool_call    data: {"name": "get_activity_details", "input": {"date": "2026-10-17"}}
-# event: tool_result  data: {"name": "get_activity_details", "output": {…}}
-# event: token        data: {"text": "Your run"}          … one per chunk
-# event: done         data: { same body as POST /chat }   (or event: error)
-
-curl -X DELETE localhost:3000/sessions/<sessionId>
+     -d '{"message": "How was my run today?"}'
 ```
 
-**Why SSE and not WebSockets:** the traffic is one-way (server → client). SSE is plain HTTP, so it works with `curl -N`, with `fetch()` streams in browsers and mobile apps, and through proxies, with no connection state to manage. FastAPI sends keep-alive pings, and a client disconnect cancels the agent run. Move to WebSockets only when the client must talk *during* a turn, for example to interrupt it or approve a tool call (human-in-the-loop).
+You'll receive a series of events as the coach works:
 
-### Everything in Docker
+| Event | Meaning | Example data |
+|---|---|---|
+| `session` | The conversation id (always first) | `{"sessionId": "…"}` |
+| `tool_call` | The coach is fetching something | `{"name": "get_activity_details", "input": {…}}` |
+| `tool_result` | …and here's what it got | `{"name": "…", "output": {…}}` |
+| `token` | A few words of the answer (many of these) | `{"text": "Your run"}` |
+| `done` | Finished; same body as `POST /chat` | `{"answer": "…", "tools": […]}` |
+| `error` | Something went wrong | `{"message": "…"}` |
 
-```bash
-docker compose up --build    # Phoenix → :6006 · Prometheus → :9090 · coach API → :3000 (reaches your host's Ollama via host.docker.internal)
-```
+A web app can show "Analysing your fitness…" on `tool_call` and then print the answer as `token` events arrive.
 
-### Switching model provider
+<details>
+<summary><b>Why Server-Sent Events and not WebSockets?</b></summary>
 
-Models are `provider:model` strings, so switching is a config change:
+The data only flows one way (server → browser), and SSE is plain HTTP: it works with `curl`, with `fetch()` in browsers and apps, and through proxies, with no connection state to manage. Closing the connection cancels the running agent. WebSockets only become worthwhile when the client must talk *during* an answer, for example to interrupt it or approve an action.
 
-```bash
-COACH_MODEL=ollama:qwen3:14b                 # default, local
-COACH_MODEL=anthropic:claude-sonnet-5-5      # + ANTHROPIC_API_KEY
-JUDGE_MODEL=anthropic:claude-haiku-4-5
-```
-
-Adding a provider (OpenAI, Bedrock, vLLM…) is one `case` in [`llm.py`](src/running_coach/llm.py).
+Browsers' built-in `EventSource` only supports `GET`, and this endpoint is a `POST`, so a React app should read the stream with `fetch()` (or the `@microsoft/fetch-event-source` library).
+</details>
 
 ---
 
-## Architecture
+## 4. How it works
+
+### The loop
 
 ```mermaid
 flowchart LR
-  subgraph Transports
-    CLI[cli.py]
-    API["api/ · FastAPI<br/>/chat · /chat/stream (SSE)"]
-    EVAL[evals/run.py]
-  end
-
-  subgraph Agent["agent/ — LangGraph"]
-    RUN["runner.py<br/>stream_turn · tracing"]
-    G(("StateGraph<br/>agent ⇄ tools"))
-    T["tools.py<br/>8 tools"]
-  end
-
-  subgraph Domain["domain/ — pure functions"]
-    P[VDOT / Riegel predictor]
-    PL[Pacing plans]
-    TR[Volume · CTL/ATL/TSB · best efforts]
-  end
-
-  subgraph Data["data/"]
-    TD{{TrainingData protocol}}
-    ICU[intervals.icu client]
-    FIX[Fixtures — raw icu shape]
-  end
-
-  LLM["llm.py<br/>Ollama · Claude"]
-
-  CLI & API & EVAL --> RUN --> G
-  G <--> T
-  G --> LLM
-  T --> Domain
-  T --> TD
-  TD --> ICU
-  TD --> FIX
-  RUN -. OTel spans .-> PHX[(Phoenix)]
-  EVAL -. datasets / experiments .-> PHX
+  Q([Your question]) --> A["agent<br/>(the language model)"]
+  A -- "needs data" --> T["tools<br/>(our Python code)"]
+  T -- "results" --> A
+  A -- "has enough" --> R([Answer])
 ```
 
-The graph ([`agent/graph.py`](src/running_coach/agent/graph.py)) is an explicit LangGraph `StateGraph`:
+This is a LangGraph graph ([`agent/graph.py`](src/running_coach/agent/graph.py)). It has two nodes, `agent` and `tools`, in a loop, capped at 8 model calls per question. Conversations are stored by LangGraph's checkpointer, keyed by session id.
 
-```
-START ─▶ agent ─(tool calls?)─▶ tools ─┐
-           ▲  └─(no)─▶ END             │
-           └───────────────────────────┘
-```
+### The tools
 
-The `agent` node asks the model what to do next, and the `tools` node (`ToolNode`) executes the calls it requested. A **checkpointer** (`InMemorySaver`, keyed by `thread_id` = sessionId) stores each conversation, so there is no hand-written session store. The step cap (8 model calls) is LangGraph's `recursion_limit`.
+| Tool | Use it for |
+|---|---|
+| `get_athlete_snapshot` | "How is my training going?" (fitness, fatigue, recent volume) |
+| `list_recent_activities` | Finding a specific run |
+| `get_activity_details` | "How was my run today?" (including interval paces) |
+| `get_fitness_trend` | "Am I fresh? Am I overtraining?" |
+| `get_training_volume` | Weekly kilometres and long runs |
+| `get_best_efforts` | Best recent 5k / 10k / half / marathon efforts |
+| `predict_race_time` | "Could I run X in Y?" (VDOT model, adjusted for volume and long runs) |
+| `build_pacing_plan` | Race splits, even or negative |
+
+### The big picture
+
+```mermaid
+flowchart TB
+  subgraph Entry["Ways to talk to the coach"]
+    CLI["Terminal<br/>cli.py"]
+    API["HTTP API<br/>api/"]
+    EV["Evals<br/>evals/"]
+  end
+
+  Entry --> RUN["agent/runner.py<br/>one turn: streaming, tracing, metrics"]
+  RUN --> G["agent/graph.py<br/>LangGraph agent ⇄ tools"]
+  G --> LLM["llm.py<br/>Ollama or Claude"]
+  G --> TOOLS["agent/tools.py"]
+  TOOLS --> DOM["domain/<br/>pure maths: VDOT, pacing, fitness"]
+  TOOLS --> DATA["data/<br/>intervals.icu or demo fixtures"]
+
+  RUN -.-> PHX[("Phoenix<br/>traces")]
+  RUN -.-> PROM[("Prometheus<br/>metrics")]
+```
 
 ### Project layout
 
-The layout follows the PyPA **src layout**, with layered packages where dependencies point inward (transports → agent → data/domain). The agent folder follows the LangGraph template convention (`state` / `prompts` / `tools` / `graph`).
-
 ```
 src/running_coach/
-  settings.py      typed config (pydantic-settings, reads env + .env)
-  llm.py           build_model("provider:model") — the provider adapter
-  telemetry.py     Phoenix register + LangChain instrumentation
-  domain/          pure logic, no I/O: models, time, vdot, predictor, pacing, training
-  data/            TrainingData protocol + Clock, intervals.icu client, fixtures, raw→domain mappers
-  agent/           state, prompts (versioned), tools, graph, runner (stream_turn / run_turn + tracing)
-  api/             FastAPI app, routes (JSON + SSE), request/response schemas
-  cli.py           terminal chat
-evals/             golden dataset, evaluators (code + LLM judges), run.py (experiment + CI gate)
-tests/             mirrors the package; fakes.py = scripted chat model
-scripts/           generate_fixture.py (seeded, reproduces fixtures/athlete-sub3.json)
-langgraph.json     LangGraph Studio / `langgraph dev`
+  settings.py     all configuration, read once from the environment / .env
+  llm.py          picks the model: "ollama:qwen3:14b" or "anthropic:claude-…"
+  telemetry.py    traces → Phoenix
+  metrics.py      metrics → Prometheus
+  domain/         pure logic, no I/O (easy to test): models, time, vdot, predictor, pacing, training
+  data/           where training data comes from: intervals.icu client, demo fixtures
+  agent/          prompts, tools, graph, runner
+  api/            FastAPI app and routes
+  cli.py          terminal chat
+evals/            quality tests for the AI (dataset, scoring, CI gate)
+tests/            fast offline tests; mirrors src/
+fixtures/         the demo athlete
 ```
 
-### Key design decisions (and why)
+Dependencies point inward: the API and CLI use the agent, the agent uses the tools, and the tools use `domain` and `data`. `domain` knows nothing about HTTP, LLMs or intervals.icu.
+
+### Design decisions
 
 | Decision | Why |
 |---|---|
-| **Explicit StateGraph, one agent + good tools** | You can see the loop and change it. It grows by adding nodes and edges (a planner, a router to specialist sub-agents, a human-approval step) rather than by rewriting. A single tool loop stays easier to debug, cheaper and faster until evals show it isn't enough. |
-| **LLM explains, domain computes** | Every time/pace/split comes from `predict_race_time` / `build_pacing_plan`. LLMs are bad at arithmetic and great at explanation. This is the #1 lever on groundedness, and it's unit-testable. |
-| **Tools return small, pre-formatted JSON** | Raw intervals.icu activities have ~100 fields. Summaries ("4:14/km", "2:58:53") cut tokens and remove unit-conversion mistakes. |
-| **Tool errors are values (`{"error": …}`), not exceptions** | The model can recover ("no run found today — did you mean yesterday?") instead of the loop crashing. |
-| **`TrainingData` protocol** | Evals run on fixtures, and adding Garmin/Strava later is a new class with no tool changes. This is the one seam kept from the original hexagonal design. |
-| **Fixtures in raw API shape + relative dates** | They go through the real mappers (so the anti-corruption layer is tested too), and "today's run" never goes stale. |
-| **Injected clock** | Freezes "today" in tests/evals, which makes scores reproducible. |
-| **One `stream_turn` for every surface** | The CLI, `/chat`, `/chat/stream` and evals share tracing, tool-call bookkeeping and rollback. `run_turn` just collects the stream. |
-| **Failed turns roll back** | If the model or a tool crashes mid-turn, the thread returns to its last good checkpoint, so a retry doesn't see half a turn. |
-| **Versioned prompt (`coach-v1`)** | It's attached to traces and experiment names, so Phoenix can compare prompt versions on the same dataset. |
-
-**Analogy:** the agent is the head coach in the conversation, and the tools are the lab technicians with the stopwatch and the spreadsheet. The head coach never invents a lab result. They ask for it, then explain what it means for you.
+| **One agent with good tools** (not many agents) | Easier to debug, cheaper and faster. Split into specialists only when evals show the single agent struggling. |
+| **The model explains, the code computes** | Removes made-up numbers, and the maths is unit-tested. |
+| **Tools return small, pre-formatted JSON** | Raw intervals.icu data has ~100 fields per activity. Sending "4:14/km" instead of metres per second saves tokens and avoids unit mistakes. |
+| **Tool errors are values, not exceptions** | The model can recover ("no run found today, shall I check yesterday?") instead of crashing. |
+| **A `TrainingData` interface** | Tests and evals use the demo athlete; Garmin or Strava later means a new class and no tool changes. |
+| **Demo data uses relative dates and the real mappers** | "Today's run" never goes stale, and the intervals.icu mapping code is exercised by tests. |
+| **Injected clock** | "Today" is frozen in tests and evals, so scores are reproducible. |
+| **Failed turns roll back** | If something crashes mid-answer, the conversation returns to its last good state, so a retry is safe. |
+| **Versioned prompt** (`coach-v1`) | Stored in every trace and experiment, so you can compare prompt versions. |
 
 ---
 
-## Observability (Phoenix)
+## 5. Configuration
 
-[`telemetry.py`](src/running_coach/telemetry.py) does two things:
-1. `phoenix.otel.register(...)` installs an OpenTelemetry tracer provider that exports to Phoenix.
-2. `LangChainInstrumentor().instrument(...)` makes every graph node, LLM call and tool call emit OpenInference spans, with no tracing code inside the agent.
+Settings come from environment variables or a `.env` file (copy [`.env.example`](.env.example)).
 
-[`runner.py`](src/running_coach/agent/runner.py) wraps each turn in a root `coach.turn` **AGENT** span inside `using_session(session_id)`, with metadata (`promptVersion`, `surface`). In Phoenix you get:
-- **Traces:** turn → agent node → LLM → tools → agent node → answer, with inputs/outputs, latency and tokens.
-- **Sessions:** whole conversations grouped by `session.id`.
-- **Filters** on metadata, e.g. `coach-v1` vs `coach-v2`, or CLI vs SSE vs eval traffic.
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATA_SOURCE` | `intervals` | `intervals` (your data) or `fixtures` (demo athlete) |
+| `INTERVALS_API_KEY` | – | Your intervals.icu key (not needed for fixtures) |
+| `COACH_MODEL` | `ollama:qwen3:14b` | The coach's model, as `provider:model` |
+| `JUDGE_MODEL` | `ollama:qwen3:14b` | The model that grades answers in the evals |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Where Ollama is running |
+| `ANTHROPIC_API_KEY` | – | Needed only for Claude models |
+| `PHOENIX_COLLECTOR_ENDPOINT` | – | Where to send traces; leave empty to disable tracing |
+| `ATHLETE_TIMEZONE` | `America/Toronto` | Defines what "today" means |
 
-What to look at first: tool calls with wrong arguments, answers given *without* a tool call, turns hitting the step cap, and slow tools.
+### Switching to Claude
 
----
-
-## Metrics (Prometheus)
-
-Traces go to Phoenix and metrics go to Prometheus: two separate pipelines. [`metrics.py`](src/running_coach/metrics.py) installs an OpenTelemetry `MeterProvider` with a `PrometheusMetricReader`, and the API serves the result at `GET /metrics` (pull model, scraped every 15 s by [`prometheus.yml`](prometheus.yml)). FastAPI's own HTTP spans are switched off (they're noise in Phoenix), but its HTTP *metrics* stay on.
-
-| Metric | Type | Labels | Answers |
-|---|---|---|---|
-| `coach_turn_duration_seconds` | histogram | `surface`, `outcome` (ok/error) | how slow is a turn, and how often does one fail? |
-| `coach_turn_steps` | histogram | `surface` | how many model calls per turn? (the step cap is 8) |
-| `coach_tokens_total` | counter | `type` (input/output) | token consumption (cost, or GPU load locally) |
-| `coach_tool_calls_total` | counter | `tool` | which tools does the model actually use? |
-| `http_server_request_duration_seconds`, `http_server_active_requests` | histogram / gauge | route, method, status | classic API health (from FastAPI) |
-
-Useful queries at http://localhost:9090:
-
-```promql
-histogram_quantile(0.95, sum by (le) (rate(coach_turn_duration_seconds_bucket[5m])))   # p95 turn latency
-sum by (outcome) (rate(coach_turn_duration_seconds_count[5m]))                         # error rate
-sum by (tool) (increase(coach_tool_calls_total[1h]))                                   # tool usage
+```bash
+COACH_MODEL=anthropic:claude-sonnet-5-5
+JUDGE_MODEL=anthropic:claude-haiku-4-5
+ANTHROPIC_API_KEY=sk-ant-…
 ```
 
-The CLI and evals record into the same instruments, but nothing exposes them there (no MeterProvider is installed), so they cost nothing. Later, an OpenTelemetry Collector can replace the direct scrape (the app pushes OTLP; the Collector fans out traces to Phoenix and metrics to Prometheus) without changing the instruments.
+Adding another provider (OpenAI, Bedrock, vLLM…) is one extra `case` in [`llm.py`](src/running_coach/llm.py).
 
 ---
 
-## Evals
+## 6. Seeing what the coach does
 
-Think of it as a test pyramid for a non-deterministic system:
+### Traces: Phoenix → http://localhost:6006
 
-| Layer | What | Where | Cost |
-|---|---|---|---|
-| Unit | Domain math, intervals.icu mapping/retries, evaluators themselves | `tests/` | free, every push |
-| Agent wiring | Full graph loop, streaming, rollback, HTTP + SSE with a scripted `FakeChatModel` | `tests/agent`, `tests/api` | free, every push |
-| Behavioural (code evals) | `tool_selection`, `required_facts`, `numbers_grounded`, `step_budget` | `evals/evaluators.py` | agent calls only |
-| Quality (LLM judges) | `groundedness`, `coaching_quality`, `safety` | `evals/evaluators.py` | agent + judge calls |
+Every question becomes a trace: the question, each model call with its full prompt and answer, each tool call with its arguments and result, plus timing and token counts. Conversations are grouped as **sessions**.
 
-- **Dataset** ([`evals/dataset.py`](evals/dataset.py)): 10 golden questions (prediction EN/FR, activity review, readiness, volume, pacing, injury safety, out-of-scope). Expectations are *behavioural* (which tools must/must not be called, which facts must appear) rather than reference answers.
-- **`numbers_grounded`** is the cheap hallucination detector: every `h:mm:ss` / `m:ss` token in the answer must exist (±1%) in tool outputs or in the question.
-- **LLM judges** answer in plain text and the label is parsed, so any chat model works as a judge. Calibrate them on ~20 traces you've labelled yourself before trusting them as a hard gate.
-- **Gate:** [`evals/thresholds.json`](evals/thresholds.json) sets the minimum mean score per evaluator. Start slightly below your first baseline, then ratchet up.
-- **Flywheel:** a bad answer in a Phoenix trace → add that question to the dataset → fix → the experiment proves it.
-- Locally the evals use Ollama (one example at a time, one GPU). Thresholds were set for Claude, so a 14B local model may fall below some of them. That is a real quality signal, so don't lower the thresholds to hide it.
+To find a model call, open a trace and click the `ChatOllama` entry in the tree; the Input and Output tabs show the full prompt and answer. The `coach.turn` span at the top summarises each question: the question, the answer, the tools used, the number of steps and token usage.
+
+What to look at first: tool calls with wrong arguments, answers given *without* any tool call, questions that hit the 8-step limit, and slow tools.
+
+FastAPI can also add its own HTTP spans (`POST /chat`, …). They're controlled by the `telemetry=` setting in [`api/app.py`](src/running_coach/api/app.py). They carry no LLM data, so turning them off keeps `coach.turn` as the root of each trace.
+
+### Metrics: Prometheus → http://localhost:9090
+
+Metrics answer "how is it doing overall?" rather than "what happened in this one chat?". The API exposes them at `/metrics` and Prometheus collects them every 15 seconds.
+
+| Metric | Tells you |
+|---|---|
+| `coach_turn_duration_seconds` (by `outcome`: ok / error) | How slow is an answer, and how often does one fail? |
+| `coach_turn_steps` | How many model calls does a question need? (limit: 8) |
+| `coach_tokens_total` (by `type`: input / output) | How many tokens are being used |
+| `coach_tool_calls_total` (by `tool`) | Which tools the model actually uses |
+| `http_server_request_duration_seconds` and friends | Standard API health, from FastAPI |
+
+Handy queries to paste into Prometheus:
+
+```promql
+histogram_quantile(0.95, sum by (le) (rate(coach_turn_duration_seconds_bucket[5m])))   # slowest 5% of answers
+sum by (outcome) (rate(coach_turn_duration_seconds_count[5m]))                         # success vs error rate
+sum by (tool) (increase(coach_tool_calls_total[1h]))                                   # tool usage in the last hour
+```
 
 ---
 
-## CI/CD
+## 7. Testing and evals
 
-| Workflow | Trigger | What |
+Testing an AI system has two parts: checking that the *code* is right, and checking that the *answers* are good.
+
+| Layer | What it checks | Cost |
 |---|---|---|
-| `ci.yml` | push / PR | `ruff check` + `ruff format --check` + `pytest`, with no secrets and no LLM calls · `docker build` + `/health` smoke test |
-| `evals.yml` | PR touching `src/`, `evals/`, `fixtures/`, `uv.lock` | golden dataset → Phoenix experiment → **fails the PR** below threshold; report in the job summary |
-| `evals.yml` | nightly | 3 repetitions → variance + provider drift detection |
+| **Unit tests** (`uv run pytest`) | The maths, intervals.icu parsing and retries, the graph loop, streaming, rollback, the HTTP and SSE API. A scripted fake model stands in for the real one. | Free and instant; runs on every push |
+| **Code evals** (`uv run python -m evals.run --code-only`) | With the real model: did it call the right tools? Does the answer contain the key facts? Is every time or pace it quotes found in the tool data (a cheap made-up-number detector)? Did it stay within 5 steps? | Model calls only |
+| **LLM judges** (`uv run python -m evals.run`) | A second model grades the answers for *groundedness*, *coaching quality* and *safety*. | Model + judge calls |
 
-GitHub runners have no GPU, so **CI evals use Claude** through the same provider switch (`anthropic:claude-sonnet-5-5`, judge `anthropic:claude-haiku-4-5`; override with repo variables `COACH_MODEL` / `JUDGE_MODEL`). Secrets: `ANTHROPIC_API_KEY` (required). `PHOENIX_HOST` + `PHOENIX_API_KEY` are optional: set them for a persistent Phoenix so experiments are comparable across PRs; otherwise an ephemeral Phoenix service container is used.
+The golden dataset ([`evals/dataset.py`](evals/dataset.py)) has 10 questions covering predictions (English and French), activity review, readiness, volume, pacing, injury safety and out-of-scope topics. Each one states *behaviour* ("must call `predict_race_time`", "must not give a pacing plan for an injury question") rather than a fixed expected answer.
+
+**The gate:** [`evals/thresholds.json`](evals/thresholds.json) sets a minimum average score per measure. The run fails (exit code 1) if any falls below, and CI uses that to block pull requests. Results are stored in Phoenix as experiments, so you can compare runs side by side.
+
+**The improvement loop:** spot a bad answer in a Phoenix trace → add that question to the dataset → fix the prompt or tool → the next experiment proves it.
+
+> ⚠️ The thresholds were set with Claude in mind. A 14B local model can fall below some of them (for example, it once gave medical-sounding advice for a knee-pain question, which fails the safety check). That's a real quality signal, so improve the model or prompt rather than lowering the thresholds.
 
 ---
 
-## Roadmap
+## 8. CI/CD
 
-1. **Validate on your real data:** a `record_fixture` script (pull your intervals.icu data, anonymise it) and a golden dataset grown from your own questions.
-2. **Pace curves:** replace whole-activity best efforts with the intervals.icu pace-curve endpoint (best 10k *inside* a long run). Confirm the response shape in the Swagger UI first.
-3. **Race planning:** a `race` entity (date, distance, course profile, goal) persisted per athlete; tools for "weeks until race" and taper/build phase checks; planned workouts written back to intervals.icu (events API).
-4. **Multi-agent, when evals justify it:** in LangGraph, a router node in front of specialist subgraphs (Analyst: data questions · Planner: blocks/workouts · Race strategist: pacing/fueling). Same eval dataset, new experiment; keep it only if scores improve.
-5. **Persistent sessions:** swap `InMemorySaver` for `langgraph-checkpoint-postgres`/`-sqlite`, plus a trim/summarise node for long conversations (the old TS store kept the last 40 messages and had a 2h TTL).
-6. **Memory:** athlete preferences and injury history (with consent) in a LangGraph `Store` the agent reads, rather than RAG.
-7. **Human-in-the-loop:** `interrupt()` before writing workouts to intervals.icu. This is the point where WebSockets (or a resume endpoint) start to make sense.
-8. **RAG (later):** a curated corpus of training methodology (Daniels, Pfitzinger, French VMA/seuil literature) with citations, evaluated with retrieval-relevance evals.
+| Workflow | When | What |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | Every push and PR | Lint, format check and unit tests (no secrets, no model), then build the Docker image and check `/health` |
+| [`evals.yml`](.github/workflows/evals.yml) | PRs touching `src/`, `evals/`, `fixtures/` or `uv.lock` | Runs the golden dataset and **fails the PR** if any score is below its threshold |
+| [`evals.yml`](.github/workflows/evals.yml) | Nightly | 3 repetitions per question, to measure variance and spot provider-side drift |
 
-## Known limitations
+GitHub's runners have no GPU, so the CI evals use **Claude** through the same `provider:model` switch (override with the repo variables `COACH_MODEL` and `JUDGE_MODEL`). You need the `ANTHROPIC_API_KEY` secret. `PHOENIX_HOST` and `PHOENIX_API_KEY` are optional: set them to keep experiments across runs; otherwise a throwaway Phoenix container is used.
 
-- Prediction adjustments for volume/long runs are **coaching heuristics**, labelled as such in tool output.
-- Form zones approximate intervals.icu's (TSB as % of CTL).
-- Activities imported into intervals.icu **from Strava are not exposed by its API**, so sync Garmin directly.
-- `numbers_grounded` reads a rounded "2:58" as m:ss, so it flags rounded marathon times (the style the prompt's own example uses) as ungrounded. Either match `h:mm` against tool times or change the prompt example.
-- LLM judges are not yet calibrated against human labels.
-- When the step cap is hit, the turn fails (`GraphRecursionError` → 502 / `error` event) instead of returning a partial answer.
+---
 
-## Sources
+## 9. Roadmap and known limitations
 
-- intervals.icu API access (Basic auth `API_KEY:<key>`, athlete `0`, endpoints): https://forum.intervals.icu/t/api-access-to-intervals-icu/609 · Swagger: https://intervals.icu/api/v1/docs/swagger-ui/index.html
-- intervals.icu API cookbook (wellness/activities endpoints): https://forum.intervals.icu/t/intervals-icu-api-integration-cookbook/80090
-- LangGraph (StateGraph, ToolNode, checkpointers, streaming): https://docs.langchain.com/oss/python/langgraph/overview
-- LangGraph Studio / `langgraph dev`: https://docs.langchain.com/langsmith/studio
-- Phoenix × LangChain/LangGraph tracing: https://arize.com/docs/phoenix/integrations/python/langchain
-- Phoenix Python experiments (`run_experiment`, evaluators): https://arize.com/docs/phoenix/datasets-and-experiments/how-to-experiments/run-experiments
+### Where it could go next
+
+1. **Test on your real data:** a script to record and anonymise your own intervals.icu data, and a dataset grown from your own questions.
+2. **Better best efforts:** use intervals.icu's pace curves (your best 10k *inside* a long run) instead of whole-run times.
+3. **Race planning:** store a goal race per athlete, add taper and build-phase checks, and write planned workouts back to intervals.icu.
+4. **Several specialists, if evals justify it:** a router in front of an analyst, a planner and a race strategist. Keep it only if scores improve.
+5. **Persistent conversations:** swap the in-memory store for Postgres or SQLite, and add trimming or summarising for long chats.
+6. **Memory:** preferences and injury history (with consent).
+7. **Human approval:** pause for confirmation before writing anything to intervals.icu. This is when WebSockets or a resume endpoint start to make sense.
+8. **Training-science knowledge base** (Daniels, Pfitzinger, …) with citations.
+9. **An OpenTelemetry Collector:** the app pushes once, and the Collector fans traces out to Phoenix and metrics to Prometheus.
+
+### Known limitations
+
+- Race-prediction adjustments for volume and long runs are **coaching heuristics**, labelled as such in the tool output.
+- Fitness "form zones" approximate intervals.icu's own.
+- Activities that intervals.icu imported **from Strava are not available through its API**; sync from Garmin directly.
+- The `numbers_grounded` eval reads a rounded "2:58" as minutes:seconds, so it flags rounded marathon times (the style the prompt itself suggests). Either compare `h:mm` against tool times or change the prompt example.
+- The LLM judges haven't been calibrated against human labels yet.
+- If a question needs more than 8 model calls, it fails with an error rather than returning a partial answer.
+- Conversations live in memory and are lost when the server restarts.
+- CORS in [`api/app.py`](src/running_coach/api/app.py) currently allows only placeholder origins; add your front-end's address before calling the API from a browser app.
+- `uv run langgraph dev` runs on a `langgraph-api` release that needs an override for an OpenTelemetry version conflict (explained in [`pyproject.toml`](pyproject.toml)).
+
+---
+
+<details>
+<summary><b>Sources</b></summary>
+
+- intervals.icu API access: https://forum.intervals.icu/t/api-access-to-intervals-icu/609 · Swagger: https://intervals.icu/api/v1/docs/swagger-ui/index.html
+- intervals.icu API cookbook: https://forum.intervals.icu/t/intervals-icu-api-integration-cookbook/80090
+- LangGraph: https://docs.langchain.com/oss/python/langgraph/overview · Studio: https://docs.langchain.com/langsmith/studio
+- Phoenix × LangChain tracing: https://arize.com/docs/phoenix/integrations/python/langchain
+- Phoenix experiments: https://arize.com/docs/phoenix/datasets-and-experiments/how-to-experiments/run-experiments
 - FastAPI Server-Sent Events: https://fastapi.tiangolo.com/advanced/server-sent-events/
-- uv projects: https://docs.astral.sh/uv/guides/projects/
-- Anthropic — Writing effective tools for agents: https://www.anthropic.com/engineering/writing-tools-for-agents
+- uv: https://docs.astral.sh/uv/guides/projects/
+- Anthropic, *Writing effective tools for agents*: https://www.anthropic.com/engineering/writing-tools-for-agents
+
+</details>
