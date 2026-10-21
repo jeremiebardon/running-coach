@@ -2,8 +2,11 @@
 # (prompt, tools, domain logic, model, dependencies).
 #
 #  - PR: run the golden dataset once; fail the PR if a threshold regresses.
-#  - Nightly: 3 repetitions to measure variance and catch provider-side drift
-#    (the same model id can behave differently over time).
+#  - Nightly: 3 repetitions to measure variance and catch provider-side drift.
+#
+# Models: GitHub runners have no GPU/Ollama, so CI evals use Claude through the
+# same provider switch (local dev stays on Ollama). Override with repo variables
+# COACH_MODEL / JUDGE_MODEL.
 #
 # Phoenix target: if PHOENIX_HOST is set as a repo secret (Phoenix Cloud or your
 # own instance), experiments persist and can be compared across PRs. Otherwise
@@ -17,7 +20,7 @@ on:
       - "src/**"
       - "evals/**"
       - "fixtures/**"
-      - "package-lock.json"
+      - "uv.lock"
   schedule:
     - cron: "17 7 * * *" # daily ~03:17 Montreal time (jittered off the hour)
   workflow_dispatch:
@@ -41,8 +44,8 @@ jobs:
           - 6006:6006
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      COACH_MODEL: ${{ vars.COACH_MODEL || 'claude-sonnet-5-5' }}
-      JUDGE_MODEL: ${{ vars.JUDGE_MODEL || 'claude-haiku-5-5' }}
+      COACH_MODEL: ${{ vars.COACH_MODEL || 'anthropic:claude-sonnet-5-5' }}
+      JUDGE_MODEL: ${{ vars.JUDGE_MODEL || 'anthropic:claude-haiku-4-5' }}
       PHOENIX_HOST: ${{ secrets.PHOENIX_HOST || 'http://localhost:6006' }}
       PHOENIX_COLLECTOR_ENDPOINT: ${{ secrets.PHOENIX_HOST || 'http://localhost:6006' }}
       PHOENIX_API_KEY: ${{ secrets.PHOENIX_API_KEY }}
@@ -50,11 +53,10 @@ jobs:
       USE_REMOTE_PHOENIX: ${{ secrets.PHOENIX_HOST != '' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+          enable-cache: true
+      - run: uv sync --locked
 
       - name: Wait for Phoenix
         if: env.USE_REMOTE_PHOENIX != 'true'
@@ -63,7 +65,7 @@ jobs:
       - name: Run evals (gate)
         run: |
           REPS=${{ github.event_name == 'schedule' && '3' || inputs.repetitions || '1' }}
-          npm run evals -- --repetitions=$REPS
+          uv run python -m evals.run --repetitions $REPS
 
       - name: Upload report
         if: always()

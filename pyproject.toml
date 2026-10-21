@@ -1,0 +1,63 @@
+[project]
+name = "running-coach"
+version = "0.1.0"
+description = "Agentic running coach on intervals.icu data — LangGraph, traced and evaluated with Arize Phoenix"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "arize-phoenix-client>=3.5.0",
+    "arize-phoenix-otel>=0.17.2",
+    "fastapi>=0.156.8",
+    "httpx>=0.28.1",
+    "langchain-anthropic>=1.7.6",
+    "langchain-core>=1.6.12",
+    "langchain-ollama>=1.1.0",
+    "langgraph>=1.2.16",
+    "openinference-instrumentation-langchain>=0.1.79",
+    "opentelemetry-exporter-prometheus>=0.66b1",
+    "opentelemetry-sdk>=1.45",
+    "prometheus-client>=0.26.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.1",
+    "tzdata>=2026.5",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+coach-chat = "running_coach.cli:main"
+coach-serve = "running_coach.api.app:main"
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]  # the formatter handles code; long prompt strings are intentional
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    # LangGraph Studio dev server (`langgraph dev`); see the override in [tool.uv]
+    "langgraph-api>=0.16.2",
+    "langgraph-cli[inmem]>=0.4.37",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.1",
+]
+
+[tool.uv]
+# langgraph-api pins opentelemetry-exporter-prometheus to the 0.63 beta line, which
+# locks opentelemetry-sdk to 1.42 — but FastAPI needs >= 1.44 and Phoenix >= 1.45.
+# The pin is OpenTelemetry's lockstep versioning of beta packages, not an API break:
+# langgraph-api only subclasses PrometheusMetricReader (no-arg constructor,
+# _receive_metrics hook), unchanged in 0.66. Drop this once langgraph-api relaxes it.
+override-dependencies = ["opentelemetry-exporter-prometheus>=0.66b1"]

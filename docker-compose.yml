@@ -1,9 +1,11 @@
-# `docker compose up --build` → Phoenix UI on :6006, coach API on :3000
+# `docker compose up --build` → Phoenix UI on :6006, Prometheus on :9090, coach API on :3000
 #
 #   curl localhost:3000/health
 #   curl -X POST localhost:3000/chat -H 'content-type: application/json' \
 #        -d '{"message":"Could I run a sub 2:55 marathon?"}'
 #   # reuse the returned sessionId to continue the conversation
+#   curl -N -X POST localhost:3000/chat/stream -H 'content-type: application/json' \
+#        -d '{"message":"How was my run today?"}'   # Server-Sent Events
 #
 # Pin image versions instead of :latest once you go beyond the POC.
 services:
@@ -16,6 +18,15 @@ services:
       - PHOENIX_WORKING_DIR=/mnt/data
     volumes:
       - phoenix_data:/mnt/data
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     restart: unless-stopped
 
   coach:
@@ -32,9 +43,10 @@ services:
       PHOENIX_PROJECT: ${PHOENIX_PROJECT:-running-coach}
       # fixtures by default; set DATA_SOURCE=intervals in .env for your real data
       DATA_SOURCE: ${DATA_SOURCE:-fixtures}
+      # Ollama running on your machine (outside Docker)
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
       # lets the container reach a model server on your machine (Ollama/LM Studio)
-      # via http://host.docker.internal:11434/v1
       - "host.docker.internal:host-gateway"
     depends_on:
       - phoenix
@@ -42,3 +54,4 @@ services:
 
 volumes:
   phoenix_data:
+  prometheus_data:

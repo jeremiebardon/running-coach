@@ -1,0 +1,9 @@
+# Scrapes the coach API's GET /metrics every 15 s.  UI → http://localhost:9090
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: running-coach
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["coach:3000"] # service name inside the compose network

@@ -15,14 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      # domain math, adapter (mocked HTTP), agent loop (mock model), evaluators, HTTP server
-      - run: npm test
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # domain math, intervals.icu client (mocked HTTP), graph (fake model), evaluators, HTTP + SSE API
+      - run: uv run pytest
 
   docker:
     # Catches a broken Dockerfile/lockfile before it reaches anyone's `docker compose up`
@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t running-coach:ci .
-      - name: Smoke test (fixtures, no API key needed for /health)
+      - name: Smoke test (fixtures, no model needed for /health)
         run: |
           docker run -d --name coach -p 3000:3000 -e DATA_SOURCE=fixtures running-coach:ci
           timeout 30 bash -c 'until curl -sf localhost:3000/health; do sleep 1; done'

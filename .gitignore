@@ -1,4 +1,8 @@
-node_modules/
 .env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.langgraph_api/
 eval-report.md
-coverage/
+.DS_Store

@@ -1,10 +1,12 @@
-node_modules
+.venv
 .git
 .github
 .env
 eval-report.md
-coverage
-test
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.langgraph_api
+tests
 evals
 scripts
-*.md
