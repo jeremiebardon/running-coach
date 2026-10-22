@@ -1,6 +1,6 @@
 from typing import Literal
 
-from running_coach.domain.time import format_duration, format_pace, js_round
+from running_coach.domain.dates import format_duration, format_pace, js_round
 
 type PacingStrategy = Literal["even", "negative"]
 

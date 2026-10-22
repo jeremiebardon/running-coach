@@ -17,10 +17,10 @@ from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 
 from running_coach.data.base import Clock, TrainingData
+from running_coach.domain.dates import add_days, format_pace, parse_duration, resolve_distance_m
 from running_coach.domain.models import DateRange, is_run
 from running_coach.domain.pacing import build_pacing_plan as plan_pacing
 from running_coach.domain.predictor import predict_race
-from running_coach.domain.time import add_days, format_pace, parse_duration, resolve_distance_m
 from running_coach.domain.training import (
     best_efforts,
     describe_performance,

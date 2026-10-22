@@ -3,8 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from running_coach.domain.models import Activity, IsoDate, Performance, WellnessDay, is_run
-from running_coach.domain.time import (
+from running_coach.domain.dates import (
     RACE_DISTANCES,
     add_days,
     format_duration,
@@ -14,6 +13,7 @@ from running_coach.domain.time import (
     round1,
     week_start,
 )
+from running_coach.domain.models import Activity, IsoDate, Performance, WellnessDay, is_run
 
 # ------------------------------- volume -------------------------------
 

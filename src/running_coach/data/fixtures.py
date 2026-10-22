@@ -18,8 +18,8 @@ from running_coach.data.schemas import (
     to_athlete_profile,
     to_wellness,
 )
+from running_coach.domain.dates import add_days
 from running_coach.domain.models import Activity, AthleteProfile, DateRange, WellnessDay
-from running_coach.domain.time import add_days
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parents[3] / "fixtures" / "athlete-sub3.json"
 

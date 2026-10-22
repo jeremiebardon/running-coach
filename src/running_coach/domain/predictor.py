@@ -1,8 +1,8 @@
 import math
 from typing import Literal
 
+from running_coach.domain.dates import days_between, format_duration, format_pace, js_round, pace_sec_per_km
 from running_coach.domain.models import IsoDate, Performance
-from running_coach.domain.time import days_between, format_duration, format_pace, js_round, pace_sec_per_km
 from running_coach.domain.training import TrainingContext
 from running_coach.domain.vdot import predict_time_from_vdot, riegel, vdot_from_performance
 

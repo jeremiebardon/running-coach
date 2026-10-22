@@ -10,8 +10,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
+from running_coach.domain.dates import js_round
 from running_coach.domain.models import Activity, AthleteProfile, Interval, WellnessDay
-from running_coach.domain.time import js_round
 
 # intervals.icu ids are strings ("i123") but some endpoints return numbers
 type _Id = Annotated[str, BeforeValidator(str)]

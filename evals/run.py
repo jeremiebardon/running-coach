@@ -24,13 +24,13 @@ from phoenix.client import AsyncClient
 from evals.dataset import DATASET_NAME, EXAMPLES
 from evals.evaluators import CODE_EVALUATORS, llm_judges
 from running_coach.agent.graph import build_graph
+from running_coach.agent.llm import build_model
 from running_coach.agent.prompts import COACH_PROMPT_VERSION
 from running_coach.agent.runner import run_turn
 from running_coach.data.base import FixedClock
 from running_coach.data.fixtures import DEFAULT_FIXTURE, FixtureData
-from running_coach.llm import build_model
+from running_coach.observability import init_telemetry, shutdown_telemetry
 from running_coach.settings import get_settings
-from running_coach.telemetry import init_telemetry, shutdown_telemetry
 
 THRESHOLDS = json.loads((Path(__file__).parent / "thresholds.json").read_text(encoding="utf-8"))
 

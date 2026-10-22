@@ -1,5 +1,5 @@
+from running_coach.domain.dates import parse_duration
 from running_coach.domain.pacing import build_pacing_plan
-from running_coach.domain.time import parse_duration
 
 
 def test_even_plan_sums_exactly_to_the_target():

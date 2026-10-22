@@ -18,7 +18,7 @@ from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttribu
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from running_coach import metrics
+from running_coach import observability
 from running_coach.agent.graph import RECURSION_LIMIT
 from running_coach.agent.prompts import COACH_PROMPT_VERSION
 
@@ -158,7 +158,7 @@ async def _run(graph, message, session_id, metadata, emit) -> None:
         _record_metrics(result, surface, started)
         await emit(DoneEvent(result))
     except Exception as err:  # the span already recorded it
-        metrics.turn_duration.record(time.perf_counter() - started, {**surface, "outcome": "error"})
+        observability.turn_duration.record(time.perf_counter() - started, {**surface, "outcome": "error"})
         await _rollback(graph, config, before)
         await emit(ErrorEvent(err))
     finally:
@@ -166,12 +166,12 @@ async def _run(graph, message, session_id, metadata, emit) -> None:
 
 
 def _record_metrics(result: TurnResult, surface: dict[str, str], started: float) -> None:
-    metrics.turn_duration.record(time.perf_counter() - started, {**surface, "outcome": "ok"})
-    metrics.turn_steps.record(result.steps, surface)
+    observability.turn_duration.record(time.perf_counter() - started, {**surface, "outcome": "ok"})
+    observability.turn_steps.record(result.steps, surface)
     for kind in ("input", "output"):
-        metrics.tokens.add(result.usage[f"{kind}_tokens"], {"type": kind})
+        observability.tokens.add(result.usage[f"{kind}_tokens"], {"type": kind})
     for call in result.tool_calls:
-        metrics.tool_calls.add(1, {"tool": call.name})
+        observability.tool_calls.add(1, {"tool": call.name})
 
 
 async def _stream_graph(graph, message, config, emit) -> TurnResult:

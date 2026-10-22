@@ -42,10 +42,10 @@ def main() -> None:
     from langgraph.checkpoint.memory import InMemorySaver
 
     from running_coach.agent.graph import build_graph
-    from running_coach.data.factory import athlete_clock, build_data_source
-    from running_coach.llm import build_model
+    from running_coach.agent.llm import build_model
+    from running_coach.data import athlete_clock, build_data_source
+    from running_coach.observability import init_telemetry, shutdown_telemetry
     from running_coach.settings import get_settings
-    from running_coach.telemetry import init_telemetry, shutdown_telemetry
 
     settings = get_settings()
     init_telemetry()

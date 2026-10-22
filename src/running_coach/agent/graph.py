@@ -15,14 +15,22 @@ import asyncio
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import START, StateGraph
+from langgraph.graph import START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from running_coach.agent.prompts import coach_instructions
-from running_coach.agent.state import CoachState
 from running_coach.agent.tools import make_tools
 from running_coach.data.base import Clock, TrainingData
+
+
+class CoachState(MessagesState):
+    """Graph state: the conversation (`messages`, appended via the add_messages reducer).
+
+    Add fields here as the agent grows — e.g. a training plan being drafted, a
+    cached athlete profile, or a router decision for sub-agents.
+    """
+
 
 MAX_STEPS = 8
 """Max model calls per turn. Each step is 2 graph supersteps (agent + tools)."""
@@ -64,8 +72,8 @@ async def make_graph() -> CompiledStateGraph:
 
 
 def _graph_from_settings() -> CompiledStateGraph:
-    from running_coach.data.factory import athlete_clock, build_data_source
-    from running_coach.llm import build_model
+    from running_coach.agent.llm import build_model
+    from running_coach.data import athlete_clock, build_data_source
     from running_coach.settings import get_settings
 
     settings = get_settings()

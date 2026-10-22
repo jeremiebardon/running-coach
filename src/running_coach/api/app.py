@@ -16,8 +16,7 @@ from langgraph.graph.state import CompiledStateGraph
 from prometheus_client import make_asgi_app
 
 from running_coach.api.routes import router
-from running_coach.metrics import init_metrics
-from running_coach.telemetry import shutdown_telemetry
+from running_coach.observability import init_metrics, shutdown_telemetry
 
 origins = [
     "http://localhost.tiangolo.com",
@@ -45,7 +44,7 @@ def create_app(graph: CompiledStateGraph, data_source: str) -> FastAPI:
         title="Running coach",
         version="0.1.0",
         lifespan=lifespan,
-        telemetry={"tracing": True, "operation_spans": True, "metrics": True, "logs": True},
+        telemetry={"tracing": False, "operation_spans": False, "metrics": True, "logs": False},
     )
 
     app.add_middleware(
@@ -81,10 +80,10 @@ def main() -> None:
     from langgraph.checkpoint.memory import InMemorySaver
 
     from running_coach.agent.graph import build_graph
-    from running_coach.data.factory import athlete_clock, build_data_source
-    from running_coach.llm import build_model
+    from running_coach.agent.llm import build_model
+    from running_coach.data import athlete_clock, build_data_source
+    from running_coach.observability import init_telemetry
     from running_coach.settings import get_settings
-    from running_coach.telemetry import init_telemetry
 
     settings = get_settings()
     init_telemetry()

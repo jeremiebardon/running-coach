@@ -155,7 +155,7 @@ flowchart TB
 
   Entry --> RUN["agent/runner.py<br/>one turn: streaming, tracing, metrics"]
   RUN --> G["agent/graph.py<br/>LangGraph agent ⇄ tools"]
-  G --> LLM["llm.py<br/>Ollama or Claude"]
+  G --> LLM["agent/llm.py<br/>Ollama or Claude"]
   G --> TOOLS["agent/tools.py"]
   TOOLS --> DOM["domain/<br/>pure maths: VDOT, pacing, fitness"]
   TOOLS --> DATA["data/<br/>intervals.icu or demo fixtures"]
@@ -169,12 +169,10 @@ flowchart TB
 ```
 src/running_coach/
   settings.py     all configuration, read once from the environment / .env
-  llm.py          picks the model: "ollama:qwen3:14b" or "anthropic:claude-…"
-  telemetry.py    traces → Phoenix
-  metrics.py      metrics → Prometheus
-  domain/         pure logic, no I/O (easy to test): models, time, vdot, predictor, pacing, training
+  observability.py  traces → Phoenix, metrics → Prometheus
+  domain/         pure logic, no I/O (easy to test): models, dates, vdot, predictor, pacing, training
   data/           where training data comes from: intervals.icu client, demo fixtures
-  agent/          prompts, tools, graph, runner
+  agent/          prompts, tools, graph, runner, llm (picks the model: "ollama:qwen3:14b" or "anthropic:claude-…")
   api/            FastAPI app and routes
   cli.py          terminal chat
 evals/            quality tests for the AI (dataset, scoring, CI gate)
@@ -223,7 +221,7 @@ JUDGE_MODEL=anthropic:claude-haiku-4-5
 ANTHROPIC_API_KEY=sk-ant-…
 ```
 
-Adding another provider (OpenAI, Bedrock, vLLM…) is one extra `case` in [`llm.py`](src/running_coach/llm.py).
+Adding another provider (OpenAI, Bedrock, vLLM…) is one extra `case` in [`agent/llm.py`](src/running_coach/agent/llm.py).
 
 ---
 
@@ -276,8 +274,6 @@ The golden dataset ([`evals/dataset.py`](evals/dataset.py)) has 10 questions cov
 **The gate:** [`evals/thresholds.json`](evals/thresholds.json) sets a minimum average score per measure. The run fails (exit code 1) if any falls below, and CI uses that to block pull requests. Results are stored in Phoenix as experiments, so you can compare runs side by side.
 
 **The improvement loop:** spot a bad answer in a Phoenix trace → add that question to the dataset → fix the prompt or tool → the next experiment proves it.
-
-> ⚠️ The thresholds were set with Claude in mind. A 14B local model can fall below some of them (for example, it once gave medical-sounding advice for a knee-pain question, which fails the safety check). That's a real quality signal, so improve the model or prompt rather than lowering the thresholds.
 
 ---
 
