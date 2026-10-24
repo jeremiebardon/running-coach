@@ -2,8 +2,16 @@
   "name": "running-coach",
   "private": true,
   "scripts": {
-    "dev": "pnpm --filter web dev",
+    "dev": "concurrently -k -n obs,api,web -c gray,blue,green \"pnpm:dev:obs\" \"pnpm:dev:api\" \"pnpm:dev:web\"",
+    "dev:obs": "docker compose up phoenix prometheus",
+    "dev:api": "uv run coach-serve --fixtures",
+    "dev:web": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
-    "gen:api": "pnpm --filter web gen:api"
+    "gen:api": "pnpm --filter web gen:api",
+    "test:web": "pnpm --filter web test",
+    "typecheck:web": "pnpm --filter web typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
   }
 }
