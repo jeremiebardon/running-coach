@@ -1,0 +1,9 @@
+{
+  "name": "running-coach",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "gen:api": "pnpm --filter web gen:api"
+  }
+}
