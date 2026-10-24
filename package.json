@@ -1,0 +1,15 @@
+{
+  "name": "running-coach",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n obs,api,web -c gray,blue,green \"pnpm:dev:obs\" \"pnpm:dev:api\" \"pnpm:dev:web\"",
+    "dev:obs": "docker compose up phoenix prometheus",
+    "dev:api": "uv run coach-serve --fixtures",
+    "dev:web": "pnpm --filter running-coach-web dev",
+    "test:web": "pnpm --filter running-coach-web test",
+    "typecheck:web": "pnpm --filter running-coach-web typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
